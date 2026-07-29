@@ -1,0 +1,6 @@
+fuzz_targets:
+  - h2_frame_fuzzer
+  - hpack_fuzzer
+  - tls_fuzzer
+  - http_fuzzer
+  - stream_fuzzer
