@@ -3,11 +3,22 @@ project(chronos C)
 
 set(CMAKE_C_STANDARD 11)
 
+# Enable parallel builds and unity build for faster compilation
+set(CMAKE_BUILD_PARALLEL_LEVEL 8)
+set(CMAKE_UNITY_BUILD ON)
+set(CMAKE_UNITY_BUILD_BATCH_SIZE 8)
+
 # Platform-specific compiler flags
 if(MSVC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4 /O2")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4 /O2 /MP")
 else()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g -j8")
+endif()
+
+# Use ccache if available for faster rebuilds
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
 # Source files
