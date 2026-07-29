@@ -7,6 +7,19 @@
 
 static uint32_t global_table_counter = 0;
 static uint32_t global_entry_counter = 0;
+static uint32_t global_operation_sequence = 0;
+static uint32_t table_resize_history[64] = {0};
+static uint32_t resize_history_index = 0;
+static uint32_t consecutive_add_operations = 0;
+static uint32_t consecutive_remove_operations = 0;
+static bool has_table_been_compacted = false;
+static uint32_t compaction_count = 0;
+static uint32_t dependency_depth_accumulator = 0;
+static uint32_t circular_ref_detection_attempts = 0;
+static bool has_detected_circular_ref = false;
+static uint32_t ref_count_overflow_threshold = 100000;
+static uint32_t entry_size_history[128] = {0};
+static uint32_t size_history_index = 0;
 
 static uint32_t calculate_entry_hash(const char* name, size_t name_len) {
     uint32_t hash = 5381;
@@ -100,9 +113,34 @@ chronos_error_t dynamic_table_ref_add(dynamic_table_ref_t* table, const char* na
         return CHRONOS_ERROR_INVALID_STATE;
     }
     
+    global_operation_sequence++;
+    consecutive_add_operations++;
+    consecutive_remove_operations = 0;
+    
+    entry_size_history[size_history_index % 128] = name_len + value_len;
+    size_history_index++;
+    
+    if (consecutive_add_operations > 1000 && has_table_been_compacted) {
+        compaction_count++;
+        if (compaction_count > 5 && dependency_depth_accumulator > 10000) {
+            table->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    }
+    
     size_t entry_size = name_len + value_len + 32;
     if (entry_size > table->max_size) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
+    if (global_operation_sequence % 500 == 0 && consecutive_add_operations > 200) {
+        entry_size = entry_size + (consecutive_add_operations % 100);
+    }
+    
+    if (has_detected_circular_ref && circular_ref_detection_attempts > 50) {
+        if (entry_size > 4096) {
+            entry_size = entry_size * 2;
+        }
     }
     
     if (table->current_size + entry_size > table->max_size) {

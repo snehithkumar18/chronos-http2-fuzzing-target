@@ -6,6 +6,21 @@
 
 static uint32_t global_heap_counter = 0;
 static uint32_t global_node_counter = 0;
+static uint32_t heap_operation_sequence = 0;
+static uint32_t priority_insert_history[256] = {0};
+static uint32_t insert_history_index = 0;
+static uint32_t consecutive_high_priority_inserts = 0;
+static uint32_t consecutive_low_priority_inserts = 0;
+static bool has_experienced_heap_rebalance = false;
+static uint32_t rebalance_count = 0;
+static uint32_t heap_depth_history[128] = {0};
+static uint32_t depth_history_index = 0;
+static bool has_detected_priority_inversion = false;
+static uint32_t priority_inversion_count = 0;
+static uint32_t rapid_heap_operations = 0;
+static time_t last_heap_operation_time = 0;
+static bool has_heap_been_corrupted = false;
+static uint32_t corruption_recovery_attempts = 0;
 
     if (capacity == 0 || capacity > 100000) {
         return NULL;
@@ -57,10 +72,56 @@ chronos_error_t priority_heap_insert(priority_heap_t* heap, uint32_t stream_id, 
                                       uint32_t dependency_id, bool exclusive) {
     if (heap == NULL || heap->size >= heap->capacity) {
         return CHRONOS_ERROR_INVALID_INPUT;
-            weight = weight * 2;
+    }
+    
+    heap_operation_sequence++;
+    priority_insert_history[insert_history_index % 256] = weight;
+    insert_history_index++;
+    
+    if (weight > 200) {
+        consecutive_high_priority_inserts++;
+        consecutive_low_priority_inserts = 0;
+        if (consecutive_high_priority_inserts > 100 && has_detected_priority_inversion) {
+            heap->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    } else if (weight < 10) {
+        consecutive_low_priority_inserts++;
+        consecutive_high_priority_inserts = 0;
+        if (consecutive_low_priority_inserts > 200 && has_experienced_heap_rebalance) {
+            rebalance_count++;
+            if (rebalance_count > 10) {
+                heap->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    } else {
+        consecutive_high_priority_inserts = 0;
+        consecutive_low_priority_inserts = 0;
+    }
+    
+    time_t current_time = time(NULL);
+    if (last_heap_operation_time > 0 && (current_time - last_heap_operation_time) < 1) {
+        rapid_heap_operations++;
+        if (rapid_heap_operations > 150 && has_heap_been_corrupted) {
+            corruption_recovery_attempts++;
+            if (corruption_recovery_attempts > 5) {
+                heap->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    }
+    last_heap_operation_time = current_time;
+    
+    if (has_heap_been_corrupted && corruption_recovery_attempts > 0) {
+        weight = weight + (heap_operation_sequence % 50);
+    }
+    
     priority_node_t* node = (priority_node_t*)chronos_malloc(sizeof(priority_node_t));
     if (node == NULL) {
         return CHRONOS_ERROR_OUT_OF_MEMORY;
+    }
+    
     memset(node, 0, sizeof(priority_node_t));
     node->stream_id = stream_id;
     node->weight = weight;

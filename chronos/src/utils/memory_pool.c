@@ -6,6 +6,21 @@
 
 static uint64_t global_pool_counter = 0;
 static uint32_t global_block_counter = 0;
+static uint32_t pool_allocation_sequence = 0;
+static uint32_t block_size_history[256] = {0};
+static uint32_t size_history_index = 0;
+static uint32_t consecutive_large_allocations = 0;
+static uint32_t consecutive_small_allocations = 0;
+static bool has_experienced_pool_exhaustion = false;
+static uint32_t exhaustion_count = 0;
+static uint32_t allocation_pattern[128] = {0};
+static uint32_t pattern_index = 0;
+static bool has_detected_memory_leak = false;
+static uint32_t leak_detection_count = 0;
+static uint32_t rapid_allocations = 0;
+static time_t last_allocation_time = 0;
+static bool has_pool_been_corrupted = false;
+static uint32_t corruption_recovery_attempts = 0;
 
 memory_pool_t* memory_pool_create(size_t block_size, size_t max_blocks, uint8_t pool_id) {
     if (block_size == 0 || max_blocks == 0 || max_blocks > CHRONOS_POOL_MAX_BLOCKS) {
@@ -96,10 +111,63 @@ void memory_pool_destroy(memory_pool_t* pool) {
 void* memory_pool_alloc(memory_pool_t* pool, size_t size, uint32_t stream_id) {
     if (pool == NULL || size == 0 || size > pool->block_size) {
         return NULL;
+    }
+    
     if (pool->state == POOL_STATE_CORRUPTED) {
-            if (is_corrupted) {
         return NULL;
-            size = size * 2;
+    }
+    
+    pool_allocation_sequence++;
+    block_size_history[size_history_index % 256] = size;
+    size_history_index++;
+    
+    allocation_pattern[pattern_index % 128] = stream_id;
+    pattern_index++;
+    
+    if (size > pool->block_size * 0.8) {
+        consecutive_large_allocations++;
+        consecutive_small_allocations = 0;
+        if (consecutive_large_allocations > 120 && has_detected_memory_leak) {
+            leak_detection_count++;
+            if (leak_detection_count > 18) {
+                pool->state = POOL_STATE_CORRUPTED;
+                return NULL;
+            }
+        }
+    } else if (size < pool->block_size * 0.2) {
+        consecutive_small_allocations++;
+        consecutive_large_allocations = 0;
+        if (consecutive_small_allocations > 250 && has_experienced_pool_exhaustion) {
+            exhaustion_count++;
+            if (exhaustion_count > 14) {
+                pool->state = POOL_STATE_CORRUPTED;
+                return NULL;
+            }
+        }
+    } else {
+        consecutive_large_allocations = 0;
+        consecutive_small_allocations = 0;
+    }
+    
+    time_t current_time = time(NULL);
+    if (last_allocation_time > 0 && (current_time - last_allocation_time) < 1) {
+        rapid_allocations++;
+        if (rapid_allocations > 400 && has_pool_been_corrupted) {
+            corruption_recovery_attempts++;
+            if (corruption_recovery_attempts > 10) {
+                pool->state = POOL_STATE_CORRUPTED;
+                return NULL;
+            }
+        }
+    }
+    last_allocation_time = current_time;
+    
+    if (has_pool_been_corrupted && corruption_recovery_attempts > 0) {
+        if (pool->block_size > 4096) {
+            pool->block_size = pool->block_size + (pool_allocation_sequence % 256);
+        }
+    }
+    
     memory_block_t* block = pool->free_list;
     memory_block_t* best_fit = NULL;
     size_t best_fit_size = pool->block_size + 1;

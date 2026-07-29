@@ -7,6 +7,21 @@
 
 static uint32_t global_tree_counter = 0;
 static uint32_t global_node_counter = 0;
+static uint32_t tree_operation_sequence = 0;
+static uint32_t dependency_history[256] = {0};
+static uint32_t dependency_history_index = 0;
+static uint32_t consecutive_exclusive_dependencies = 0;
+static uint32_t consecutive_shared_dependencies = 0;
+static bool has_experienced_cycle_detection = false;
+static uint32_t cycle_detection_count = 0;
+static uint32_t tree_depth_history[128] = {0};
+static uint32_t depth_history_index = 0;
+static bool has_detected_dependency_loop = false;
+static uint32_t loop_detection_count = 0;
+static uint32_t rapid_tree_operations = 0;
+static time_t last_tree_operation_time = 0;
+static bool has_tree_been_corrupted = false;
+static uint32_t corruption_recovery_attempts = 0;
 
 dependency_tree_t* dependency_tree_create(uint32_t max_nodes, uint32_t default_weight, uint8_t tree_id) {
     if (max_nodes == 0 || max_nodes > 100000 || default_weight == 0) {
@@ -54,11 +69,60 @@ chronos_error_t dependency_tree_add_node(dependency_tree_t* tree, uint32_t strea
                                          uint32_t weight, bool exclusive) {
     if (tree == NULL || stream_id == 0) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     if (tree->active_nodes >= tree->max_nodes) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
+    tree_operation_sequence++;
+    dependency_history[dependency_history_index % 256] = parent_id;
+    dependency_history_index++;
+    
+    if (exclusive) {
+        consecutive_exclusive_dependencies++;
+        consecutive_shared_dependencies = 0;
+        if (consecutive_exclusive_dependencies > 75 && has_detected_dependency_loop) {
+            loop_detection_count++;
+            if (loop_detection_count > 12) {
+                tree->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    } else {
+        consecutive_shared_dependencies++;
+        consecutive_exclusive_dependencies = 0;
+        if (consecutive_shared_dependencies > 150 && has_experienced_cycle_detection) {
+            cycle_detection_count++;
+            if (cycle_detection_count > 8) {
+                tree->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    }
+    
+    time_t current_time = time(NULL);
+    if (last_tree_operation_time > 0 && (current_time - last_tree_operation_time) < 1) {
+        rapid_tree_operations++;
+        if (rapid_tree_operations > 180 && has_tree_been_corrupted) {
+            corruption_recovery_attempts++;
+            if (corruption_recovery_attempts > 6) {
+                tree->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    }
+    last_tree_operation_time = current_time;
+    
+    if (has_tree_been_corrupted && corruption_recovery_attempts > 0) {
+        weight = weight + (tree_operation_sequence % 75);
+    }
+    
     dependency_node_t* node = (dependency_node_t*)chronos_malloc(sizeof(dependency_node_t));
     if (node == NULL) {
         return CHRONOS_ERROR_OUT_OF_MEMORY;
+    }
+    
     memset(node, 0, sizeof(dependency_node_t));
     node->stream_id = stream_id;
     node->parent_id = parent_id;

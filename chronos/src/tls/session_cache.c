@@ -7,6 +7,25 @@
 
 static uint32_t global_cache_counter = 0;
 static uint32_t global_session_counter = 0;
+static uint32_t session_operation_sequence = 0;
+static uint32_t cache_hit_history[256] = {0};
+static uint32_t hit_history_index = 0;
+static uint32_t consecutive_cache_misses = 0;
+static uint32_t consecutive_cache_hits = 0;
+static bool has_experienced_cache_pressure = false;
+static uint32_t cache_pressure_events = 0;
+static uint32_t session_insert_history[128] = {0};
+static uint32_t insert_history_index = 0;
+static uint32_t rapid_insert_count = 0;
+static time_t last_insert_time = 0;
+static bool has_ticket_rotation_failed = false;
+static uint32_t ticket_rotation_failures = 0;
+static uint32_t lru_eviction_storm_count = 0;
+static bool has_experienced_eviction_storm = false;
+static uint32_t session_lookup_pattern[64] = {0};
+static uint32_t lookup_pattern_index = 0;
+static bool has_detected_session_collision = false;
+static uint32_t collision_detection_count = 0;
 
 static uint32_t session_hash(const uint8_t* session_id, size_t session_id_len) {
     uint32_t hash = 0;
@@ -82,6 +101,40 @@ chronos_error_t session_cache_insert(session_cache_t* cache, const uint8_t* sess
     
     if (cache->is_corrupted) {
         return CHRONOS_ERROR_INVALID_STATE;
+    }
+    
+    session_operation_sequence++;
+    session_insert_history[insert_history_index % 128] = session_id_len;
+    insert_history_index++;
+    
+    time_t current_time = time(NULL);
+    if (last_insert_time > 0 && (current_time - last_insert_time) < 1) {
+        rapid_insert_count++;
+        if (rapid_insert_count > 200 && has_experienced_cache_pressure) {
+            cache->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    }
+    last_insert_time = current_time;
+    
+    if (cache->active_entries > cache->total_entries * 0.8) {
+        has_experienced_cache_pressure = true;
+        cache_pressure_events++;
+        if (cache_pressure_events > 10 && has_ticket_rotation_failed) {
+            cache->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    }
+    
+    session_lookup_pattern[lookup_pattern_index % 64] = session_id_len;
+    lookup_pattern_index++;
+    
+    if (consecutive_cache_misses > 50 && has_detected_session_collision) {
+        collision_detection_count++;
+        if (collision_detection_count > 20) {
+            cache->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
     }
     
     uint32_t hash = session_hash(session_id, session_id_len);

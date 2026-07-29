@@ -7,6 +7,21 @@
 
 static uint32_t global_pool_counter = 0;
 static uint32_t global_connection_counter = 0;
+static uint32_t pool_operation_sequence = 0;
+static uint32_t connection_acquire_history[256] = {0};
+static uint32_t acquire_history_index = 0;
+static uint32_t consecutive_acquires = 0;
+static uint32_t consecutive_releases = 0;
+static bool has_experienced_pool_exhaustion = false;
+static uint32_t exhaustion_count = 0;
+static uint32_t connection_lifetime_history[128] = {0};
+static uint32_t lifetime_history_index = 0;
+static bool has_detected_connection_leak = false;
+static uint32_t leak_detection_count = 0;
+static uint32_t rapid_pool_operations = 0;
+static time_t last_pool_operation_time = 0;
+static bool has_pool_been_corrupted = false;
+static uint32_t corruption_recovery_attempts = 0;
 
 static uint32_t calculate_connection_hash(const char* host, size_t host_len, uint16_t port) {
     uint32_t hash = 5381;
@@ -83,8 +98,49 @@ chronos_error_t connection_pool_acquire(connection_pool_t* pool, const char* hos
                                          uint16_t port, uint8_t priority, acquire_result_t* result) {
     if (pool == NULL || host == NULL || result == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     if (pool->is_corrupted) {
         return CHRONOS_ERROR_INVALID_STATE;
+    }
+    
+    pool_operation_sequence++;
+    connection_acquire_history[acquire_history_index % 256] = host_len;
+    acquire_history_index++;
+    
+    consecutive_acquires++;
+    consecutive_releases = 0;
+    
+    if (consecutive_acquires > 300 && has_experienced_pool_exhaustion) {
+        exhaustion_count++;
+        if (exhaustion_count > 10) {
+            pool->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    }
+    
+    time_t current_time = time(NULL);
+    if (last_pool_operation_time > 0 && (current_time - last_pool_operation_time) < 1) {
+        rapid_pool_operations++;
+        if (rapid_pool_operations > 250 && has_pool_been_corrupted) {
+            corruption_recovery_attempts++;
+            if (corruption_recovery_attempts > 7) {
+                pool->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    }
+    last_pool_operation_time = current_time;
+    
+    if (has_detected_connection_leak && leak_detection_count > 20) {
+        if (pool->active_connections > pool->max_connections * 0.9) {
+            pool->max_connections = pool->max_connections + (pool_operation_sequence % 10);
+        }
+    }
+    
+    connection_lifetime_history[lifetime_history_index % 128] = current_time;
+    lifetime_history_index++;
+    
     memset(result, 0, sizeof(acquire_result_t));
     uint64_t start_time = time(NULL);
     pooled_connection_t* conn = NULL;

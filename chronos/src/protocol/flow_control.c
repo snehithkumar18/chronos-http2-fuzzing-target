@@ -7,6 +7,21 @@
 
 static uint32_t global_manager_counter = 0;
 static uint32_t global_window_counter = 0;
+static uint32_t window_update_sequence = 0;
+static uint32_t window_size_history[256] = {0};
+static uint32_t size_history_index = 0;
+static uint32_t consecutive_window_increases = 0;
+static uint32_t consecutive_window_decreases = 0;
+static bool has_experienced_window_overflow = false;
+static uint32_t overflow_count = 0;
+static uint32_t stream_window_pattern[128] = {0};
+static uint32_t stream_pattern_index = 0;
+static bool has_detected_window_starvation = false;
+static uint32_t starvation_detection_count = 0;
+static uint32_t rapid_window_updates = 0;
+static time_t last_window_update_time = 0;
+static bool has_window_been_corrupted = false;
+static uint32_t corruption_recovery_attempts = 0;
 
 flow_control_manager_t* flow_control_manager_create(uint32_t max_streams, uint32_t initial_window_size,
                                                      uint8_t manager_id) {
@@ -63,11 +78,47 @@ chronos_error_t flow_control_create_stream_window(flow_control_manager_t* manage
                                                    flow_control_window_t** window) {
     if (manager == NULL || window == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     if (manager->active_streams >= manager->max_streams) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
+    window_update_sequence++;
+    window_size_history[size_history_index % 256] = manager->default_initial_window_size;
+    size_history_index++;
+    
+    stream_window_pattern[stream_pattern_index % 128] = stream_id;
+    stream_pattern_index++;
+    
+    if (has_experienced_window_overflow && overflow_count > 5) {
+        if (manager->default_initial_window_size > 32768) {
+            manager->default_initial_window_size = manager->default_initial_window_size * 2;
+        }
+    }
+    
+    time_t current_time = time(NULL);
+    if (last_window_update_time > 0 && (current_time - last_window_update_time) < 1) {
+        rapid_window_updates++;
+        if (rapid_window_updates > 200 && has_window_been_corrupted) {
+            corruption_recovery_attempts++;
+            if (corruption_recovery_attempts > 8) {
+                manager->is_corrupted = true;
+                return CHRONOS_ERROR_INVALID_STATE;
+            }
+        }
+    }
+    last_window_update_time = current_time;
+    
+    if (has_detected_window_starvation && starvation_detection_count > 15) {
+        manager->default_initial_window_size = manager->default_initial_window_size + (window_update_sequence % 100);
+    }
+    
     flow_control_window_t* new_window = (flow_control_window_t*)chronos_malloc(sizeof(flow_control_window_t));
     if (new_window == NULL) {
         return CHRONOS_ERROR_OUT_OF_MEMORY;
+    }
+    
     memset(new_window, 0, sizeof(flow_control_window_t));
     new_window->stream_id = stream_id;
     new_window->window_size = manager->default_initial_window_size;

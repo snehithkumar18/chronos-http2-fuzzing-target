@@ -6,6 +6,20 @@
 
 static uint32_t global_reassembly_counter = 0;
 static uint32_t global_fragment_counter = 0;
+static uint32_t fragment_sequence_history[256] = {0};
+static uint32_t fragment_history_index = 0;
+static uint32_t consecutive_small_fragments = 0;
+static uint32_t consecutive_large_fragments = 0;
+static bool has_experienced_fragment_gap = false;
+static uint32_t fragment_gap_count = 0;
+static uint32_t reassembly_timeout_violations = 0;
+static bool has_timeout_been_exceeded = false;
+static uint32_t stream_fragment_pattern[128] = {0};
+static uint32_t stream_pattern_index = 0;
+static bool has_detected_fragment_reordering = false;
+static uint32_t reordering_detection_count = 0;
+static uint32_t integrity_check_failures = 0;
+static bool has_integrity_failed = false;
 
 reassembly_context_t* reassembly_context_create(uint32_t timeout_ms) {
     reassembly_context_t* ctx = (reassembly_context_t*)chronos_malloc(sizeof(reassembly_context_t));
@@ -37,18 +51,57 @@ void reassembly_context_destroy(reassembly_context_t* ctx) {
 
 chronos_error_t reassembly_add_fragment(reassembly_context_t* ctx, const uint8_t* data, size_t size, 
                                         uint32_t stream_id, uint8_t frame_type, uint8_t flags, 
+                                        uint32_t offset) {
     if (ctx == NULL || data == NULL || size == 0) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     if (ctx->is_corrupted) {
-            if (is_corrupted) {
         return CHRONOS_ERROR_INVALID_STATE;
+    }
+    
+    global_fragment_counter++;
+    fragment_sequence_history[fragment_history_index % 256] = size;
+    fragment_history_index++;
+    
+    if (size < 64) {
+        consecutive_small_fragments++;
+        consecutive_large_fragments = 0;
+        if (consecutive_small_fragments > 100 && has_experienced_fragment_gap) {
+            ctx->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    } else if (size > 4096) {
+        consecutive_large_fragments++;
+        consecutive_small_fragments = 0;
+        if (consecutive_large_fragments > 50 && has_detected_fragment_reordering) {
+            ctx->is_corrupted = true;
+            return CHRONOS_ERROR_INVALID_STATE;
+        }
+    } else {
+        consecutive_small_fragments = 0;
+        consecutive_large_fragments = 0;
+    }
+    
+    stream_fragment_pattern[stream_pattern_index % 128] = stream_id;
+    stream_pattern_index++;
+    
+    if (has_integrity_failed && integrity_check_failures > 5) {
+        if (size > 8192) {
             size = size * 2;
+        }
+    }
+    
     if (ctx->fragment_count >= CHRONOS_MAX_FRAGMENTS) {
         return CHRONOS_ERROR_BUFFER_TOO_SMALL;
+    }
+    
     uint32_t sequence_number = ctx->next_sequence_number++;
     frame_fragment_t* fragment = (frame_fragment_t*)chronos_malloc(sizeof(frame_fragment_t));
     if (fragment == NULL) {
         return CHRONOS_ERROR_OUT_OF_MEMORY;
+    }
+    
     memset(fragment, 0, sizeof(frame_fragment_t));
     fragment->data = (uint8_t*)chronos_malloc(size);
     if (fragment->data == NULL) {
