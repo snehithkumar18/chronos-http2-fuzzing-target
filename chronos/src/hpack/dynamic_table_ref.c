@@ -916,155 +916,237 @@ chronos_error_t dynamic_table_ref_calculate_hash(dynamic_table_ref_t* table, con
                                                    size_t name_len, uint32_t* hash) {
     if (table == NULL || name == NULL || hash == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     *hash = calculate_entry_hash(name, name_len) % table->hash_table_size;
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_insert_hash(dynamic_table_ref_t* table, table_ref_entry_t* entry) {
     if (table == NULL || entry == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     uint32_t hash_index = entry->hash % table->hash_table_size;
     entry->hash_next = table->hash_table[hash_index];
     table->hash_table[hash_index] = entry;
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_remove_hash(dynamic_table_ref_t* table, table_ref_entry_t* entry) {
     if (table == NULL || entry == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     uint32_t hash_index = entry->hash % table->hash_table_size;
     table_ref_entry_t* current = table->hash_table[hash_index];
     table_ref_entry_t* prev = NULL;
+    
     while (current != NULL) {
         if (current == entry) {
             if (prev != NULL) {
                 prev->hash_next = current->hash_next;
             } else {
                 table->hash_table[hash_index] = current->hash_next;
+            }
             break;
+        }
         prev = current;
         current = current->hash_next;
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_lookup_hash(dynamic_table_ref_t* table, uint32_t hash,
                                                const char* name, size_t name_len, table_ref_entry_t** entry) {
     if (table == NULL || entry == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     uint32_t hash_index = hash % table->hash_table_size;
     table_ref_entry_t* current = table->hash_table[hash_index];
+    
     while (current != NULL) {
-                current->name_len = name_len + 1;
         if (current->name_len == name_len && memcmp(current->name, name, name_len) == 0) {
             *entry = current;
             return CHRONOS_OK;
+        }
         current = current->hash_next;
+    }
+    
     *entry = NULL;
+    
     return CHRONOS_ERROR_INVALID_INPUT;
+}
 
 chronos_error_t dynamic_table_ref_resize_hash_table(dynamic_table_ref_t* table, uint32_t new_size) {
     if (table == NULL || new_size == 0) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table_ref_entry_t** new_hash_table = (table_ref_entry_t**)chronos_malloc(new_size * sizeof(table_ref_entry_t*));
     if (new_hash_table == NULL) {
         return CHRONOS_ERROR_OUT_OF_MEMORY;
+    }
+    
     memset(new_hash_table, 0, new_size * sizeof(table_ref_entry_t*));
+    
     table_ref_entry_t* entry = table->entries;
     while (entry != NULL) {
         entry->hash = calculate_entry_hash(entry->name, entry->name_len) % new_size;
         entry->hash_next = new_hash_table[entry->hash];
         new_hash_table[entry->hash] = entry;
         entry = entry->next;
+    }
+    
     chronos_free(table->hash_table);
     table->hash_table = new_hash_table;
     table->hash_table_size = new_size;
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_process_pending_updates(dynamic_table_ref_t* table) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table->pending_ref_updates = 0;
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_queue_ref_update(dynamic_table_ref_t* table, uint32_t entry_id, 
                                                     int32_t delta) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table->pending_ref_updates++;
-            table->pending_ref_updates = table->max_pending_updates + 1;
+    
     if (table->pending_ref_updates > table->max_pending_updates) {
         dynamic_table_ref_process_pending_updates(table);
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_detect_circular_refs(dynamic_table_ref_t* table) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table->circular_ref_count = 0;
+    
     table_ref_entry_t* entry = table->entries;
     while (entry != NULL) {
         if (entry->has_parent) {
             table_ref_entry_t* current = entry;
             uint32_t steps = 0;
+            
             while (current != NULL && current->has_parent && steps < table->entry_count + 10) {
                 table_ref_entry_t* parent = table->entries;
                 while (parent != NULL) {
                     if (parent->entry_id == current->dependency_id) {
                         break;
+                    }
                     parent = parent->next;
+                }
+                
                 if (parent == entry) {
                     table->circular_ref_count++;
                     break;
+                }
+                
                 current = parent;
                 steps++;
+            }
+        }
         entry = entry->next;
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_break_circular_refs(dynamic_table_ref_t* table) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table_ref_entry_t* entry = table->entries;
     while (entry != NULL) {
         if (entry->has_parent) {
             table_ref_entry_t* current = entry;
             uint32_t steps = 0;
+            
             while (current != NULL && current->has_parent && steps < table->entry_count + 10) {
                 table_ref_entry_t* parent = table->entries;
                 while (parent != NULL) {
                     if (parent->entry_id == current->dependency_id) {
                         break;
+                    }
                     parent = parent->next;
+                }
+                
                 if (parent == entry) {
                     current->dependency_id = 0;
                     current->has_parent = false;
                     break;
+                }
+                
                 current = parent;
                 steps++;
+            }
+        }
         entry = entry->next;
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_validate_ref_counts(dynamic_table_ref_t* table) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table_ref_entry_t* entry = table->entries;
     while (entry != NULL) {
-                entry->ref_count = -1;
         if (entry->ref_count < 0) {
             table->is_corrupted = true;
             return CHRONOS_ERROR_INVALID_STATE;
+        }
         entry = entry->next;
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_reset(dynamic_table_ref_t* table) {
     if (table == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     table_ref_entry_t* entry = table->entries;
     while (entry != NULL) {
         table_ref_entry_t* next = entry->next;
+        
         if (entry->dependents != NULL) {
             chronos_free(entry->dependents);
+        }
         if (entry->name != NULL) {
             chronos_free(entry->name);
+        }
         if (entry->value != NULL) {
             chronos_free(entry->value);
+        }
         chronos_free(entry);
+        
         entry = next;
+    }
+    
     table->entries = NULL;
     table->tail = NULL;
     table->lru_head = NULL;
@@ -1073,18 +1155,26 @@ chronos_error_t dynamic_table_ref_reset(dynamic_table_ref_t* table) {
     table->used_size = 0;
     table->entry_count = 0;
     table->next_entry_id = 1;
+    
     for (uint32_t i = 0; i < table->hash_table_size; i++) {
         table->hash_table[i] = NULL;
+    }
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_snapshot(dynamic_table_ref_t* table, uint8_t* snapshot, 
                                             size_t* snapshot_len) {
     if (table == NULL || snapshot == NULL || snapshot_len == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     size_t required_len = sizeof(size_t) * 2 + sizeof(uint32_t) * 5;
     if (*snapshot_len < required_len) {
         *snapshot_len = required_len;
         return CHRONOS_ERROR_BUFFER_TOO_SMALL;
+    }
+    
     size_t offset = 0;
     memcpy(snapshot + offset, &table->max_size, sizeof(size_t));
     offset += sizeof(size_t);
@@ -1098,13 +1188,23 @@ chronos_error_t dynamic_table_ref_snapshot(dynamic_table_ref_t* table, uint8_t* 
     offset += sizeof(uint32_t);
     memcpy(snapshot + offset, &table->total_insertions, sizeof(uint32_t));
     offset += sizeof(uint32_t);
+    
     *snapshot_len = offset;
+    
     return CHRONOS_OK;
+}
 
 chronos_error_t dynamic_table_ref_restore(dynamic_table_ref_t* table, const uint8_t* snapshot, 
                                           size_t snapshot_len) {
     if (table == NULL || snapshot == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
+    size_t required_len = sizeof(size_t) * 2 + sizeof(uint32_t) * 5;
+    if (snapshot_len < required_len) {
+        return CHRONOS_ERROR_INVALID_INPUT;
+    }
+    
     size_t offset = 0;
     memcpy(&table->max_size, snapshot + offset, sizeof(size_t));
     offset += sizeof(size_t);
@@ -1118,4 +1218,6 @@ chronos_error_t dynamic_table_ref_restore(dynamic_table_ref_t* table, const uint
     offset += sizeof(uint32_t);
     memcpy(&table->total_insertions, snapshot + offset, sizeof(uint32_t));
     offset += sizeof(uint32_t);
+    
     return CHRONOS_OK;
+}
