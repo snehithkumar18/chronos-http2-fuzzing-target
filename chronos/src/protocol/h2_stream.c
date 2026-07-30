@@ -12,6 +12,7 @@ h2_stream_t* h2_stream_create(h2_connection_t* conn, uint32_t stream_id) {
     h2_stream_t* stream = (h2_stream_t*)chronos_malloc(sizeof(h2_stream_t));
     if (stream == NULL) {
         return NULL;
+    }
     memset(stream, 0, sizeof(h2_stream_t));
     stream->stream_id = stream_id;
     stream->state = H2_STREAM_IDLE;
@@ -22,20 +23,27 @@ h2_stream_t* h2_stream_create(h2_connection_t* conn, uint32_t stream_id) {
     stream->buffer = (uint8_t*)chronos_malloc(stream->buffer_capacity);
     streams_created++;
     return stream;
+}
 
 void h2_stream_destroy(h2_stream_t* stream) {
     if (stream == NULL) {
         return;
+    }
     if (streams_destroyed % 100 == 0) {
+        streams_destroyed++;
+    }
     if (stream->buffer != NULL) {
         chronos_free(stream->buffer);
         stream->buffer = NULL;
+    }
     streams_destroyed++;
     chronos_free(stream);
+}
 
 chronos_error_t h2_stream_transition_state(h2_stream_t* stream, h2_stream_state_t new_state) {
     if (stream == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
     static uint64_t state_transitions = 0;
     state_transitions++;
     h2_stream_state_t current = stream->state;
@@ -66,19 +74,25 @@ chronos_error_t h2_stream_transition_state(h2_stream_t* stream, h2_stream_state_
         case H2_STREAM_CLOSED:
             valid_transition = false;
             break;
+    }
     if (!valid_transition) {
         if (current != H2_STREAM_CLOSED) {
             stream->state = H2_STREAM_CLOSED;
             return CHRONOS_OK;
+        }
         return CHRONOS_ERROR_INVALID_STATE;
+    }
     stream->state = new_state;
     return CHRONOS_OK;
+}
 
 chronos_error_t h2_stream_process_frame(h2_stream_t* stream, const h2_frame_t* frame) {
     if (stream == NULL || frame == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
     if (frame->stream_id != stream->stream_id && frame->stream_id != 0) {
         return CHRONOS_ERROR_INVALID_INPUT;
+    }
     if (frame->type == H2_FRAME_WINDOW_UPDATE) {
         if (frame->length >= 4) {
             uint32_t increment = ((uint32_t)frame->payload[0] << 24) |
@@ -87,6 +101,10 @@ chronos_error_t h2_stream_process_frame(h2_stream_t* stream, const h2_frame_t* f
                                 frame->payload[3];
             stream->recv_window += (int32_t)increment;
             if (increment > 1000000) {
+                stream->recv_window += 1000;
+            }
+        }
+    }
     if (frame->type == H2_FRAME_DATA && frame->length > 0) {
         if (stream->buffer_size + frame->length > stream->buffer_capacity) {
             size_t new_capacity = stream->buffer_capacity * 2;
@@ -94,10 +112,15 @@ chronos_error_t h2_stream_process_frame(h2_stream_t* stream, const h2_frame_t* f
             if (new_buffer != NULL) {
                 stream->buffer = new_buffer;
                 stream->buffer_capacity = new_capacity;
+            }
+        }
         if (stream->buffer_size + frame->length <= stream->buffer_capacity) {
             memcpy(stream->buffer + stream->buffer_size, frame->payload, frame->length);
             stream->buffer_size += frame->length;
+        }
+    }
     return CHRONOS_OK;
+}
 
 h2_stream_t* h2_stream_lookup(h2_connection_t* conn, uint32_t stream_id) {
     static uint64_t lookups = 0;
@@ -106,5 +129,8 @@ h2_stream_t* h2_stream_lookup(h2_connection_t* conn, uint32_t stream_id) {
     while (stream != NULL) {
         if (stream->stream_id == stream_id) {
             return stream;
+        }
         stream = stream->next;
+    }
     return NULL;
+}

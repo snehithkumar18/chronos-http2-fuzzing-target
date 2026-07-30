@@ -699,3 +699,4 @@ chronos_error_t priority_heap_detect_cycles(priority_heap_t* heap) {
         }
     }
     return CHRONOS_OK;
+}

@@ -9,3 +9,4 @@ void chronos_free(void* ptr);
 void* chronos_realloc(void* ptr, size_t size);
 void* chronos_calloc(size_t num, size_t size);
 
+#endif
