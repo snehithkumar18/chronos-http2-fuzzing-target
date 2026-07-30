@@ -3,10 +3,8 @@ project(chronos C)
 
 set(CMAKE_C_STANDARD 11)
 
-# Enable parallel builds and unity build for faster compilation
+# Enable parallel builds for faster compilation
 set(CMAKE_BUILD_PARALLEL_LEVEL 8)
-set(CMAKE_UNITY_BUILD ON)
-set(CMAKE_UNITY_BUILD_BATCH_SIZE 8)
 
 # Platform-specific compiler flags
 if(MSVC)
