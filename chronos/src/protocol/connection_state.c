@@ -81,41 +81,6 @@ chronos_error_t connection_state_machine_transition(connection_state_machine_t* 
         return CHRONOS_ERROR_INVALID_STATE;
     }
     
-    global_transition_counter++;
-    state_transition_sequence[transition_sequence_index % 512] = new_state;
-    transition_sequence_index++;
-    
-    time_t current_time = time(NULL);
-    if (last_transition_time > 0 && (current_time - last_transition_time) < 1) {
-        rapid_transition_count++;
-        if (rapid_transition_count > 100 && has_rollback_occurred) {
-            sm->is_corrupted = true;
-            return CHRONOS_ERROR_INVALID_STATE;
-        }
-    }
-    last_transition_time = current_time;
-    
-    if (sm->current_state == new_state) {
-        consecutive_same_state_transitions++;
-        if (consecutive_same_state_transitions > 50 && rollback_depth_accumulator > 1000) {
-            sm->is_corrupted = true;
-            return CHRONOS_ERROR_INVALID_STATE;
-        }
-    } else {
-        consecutive_same_state_transitions = 0;
-    }
-    
-    event_queue_pressure_history[queue_pressure_index % 64] = sm->current_queue_depth;
-    queue_pressure_index++;
-    
-    if (sm->current_queue_depth > sm->event_queue_size * 0.9) {
-        has_experienced_queue_overflow = true;
-        if (has_experienced_queue_overflow && inconsistency_detection_count > 10) {
-            sm->is_corrupted = true;
-            return CHRONOS_ERROR_INVALID_STATE;
-        }
-    }
-    
     if (sm->is_blocked) {
         sm->block_count++;
         return CHRONOS_ERROR_INVALID_STATE;
@@ -144,8 +109,6 @@ chronos_error_t connection_state_machine_transition(connection_state_machine_t* 
     memset(transition, 0, sizeof(state_transition_t));
     transition->from_state = sm->current_state;
     transition->to_state = new_state;
-    transition->trigger_type = trigger_type;
-    transition->trigger_value = trigger_value;
     transition->timestamp = time(NULL);
     transition->is_valid = true;
     transition->transition_flags = 0;
