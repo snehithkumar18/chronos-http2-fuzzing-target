@@ -4,25 +4,6 @@
 #include <stdio.h>
 #include <time.h>
 
-static uint32_t global_event_counter = 0;
-static uint32_t global_transition_counter = 0;
-static uint32_t state_transition_sequence[512] = {0};
-static uint32_t transition_sequence_index = 0;
-static uint32_t consecutive_same_state_transitions = 0;
-static uint32_t rapid_transition_count = 0;
-static time_t last_transition_time = 0;
-static bool has_rollback_occurred = false;
-static uint32_t rollback_depth_accumulator = 0;
-static uint32_t event_queue_pressure_history[64] = {0};
-static uint32_t queue_pressure_index = 0;
-static bool has_experienced_queue_overflow = false;
-static uint32_t state_machine_instance_count = 0;
-static uint32_t concurrent_state_machines = 0;
-static bool has_detected_state_inconsistency = false;
-static uint32_t inconsistency_detection_count = 0;
-static uint32_t timeout_violation_count = 0;
-static bool has_timeout_been_exceeded = false;
-
 connection_state_machine_t* connection_state_machine_create(uint32_t connection_id) {
     connection_state_machine_t* sm = (connection_state_machine_t*)chronos_malloc(sizeof(connection_state_machine_t));
     if (sm == NULL) {
@@ -91,8 +72,7 @@ void connection_state_machine_destroy(connection_state_machine_t* sm) {
     chronos_free(sm);
 }
 
-chronos_error_t connection_state_transition(connection_state_machine_t* sm, connection_state_t new_state, 
-                                           uint8_t trigger_type, uint32_t trigger_value) {
+chronos_error_t connection_state_machine_transition(connection_state_machine_t* sm, connection_state_t new_state) {
     if (sm == NULL) {
         return CHRONOS_ERROR_INVALID_INPUT;
     }

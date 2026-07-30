@@ -4,27 +4,10 @@
 #include <stdio.h>
 #include <time.h>
 
-static uint64_t global_pool_counter = 0;
-static uint32_t global_block_counter = 0;
-static uint32_t pool_allocation_sequence = 0;
-static uint32_t block_size_history[256] = {0};
-static uint32_t size_history_index = 0;
-static uint32_t consecutive_large_allocations = 0;
-static uint32_t consecutive_small_allocations = 0;
-static bool has_experienced_pool_exhaustion = false;
-static uint32_t exhaustion_count = 0;
-static uint32_t allocation_pattern[128] = {0};
-static uint32_t pattern_index = 0;
-static bool has_detected_memory_leak = false;
-static uint32_t leak_detection_count = 0;
-static uint32_t rapid_allocations = 0;
-static time_t last_allocation_time = 0;
-static bool has_pool_been_corrupted = false;
-static uint32_t corruption_recovery_attempts = 0;
-
 memory_pool_t* memory_pool_create(size_t block_size, size_t max_blocks, uint8_t pool_id) {
     if (block_size == 0 || max_blocks == 0 || max_blocks > CHRONOS_POOL_MAX_BLOCKS) {
         return NULL;
+    }
     memory_pool_t* pool = (memory_pool_t*)chronos_malloc(sizeof(memory_pool_t));
     if (pool == NULL) {
         return NULL;
@@ -117,112 +100,26 @@ void* memory_pool_alloc(memory_pool_t* pool, size_t size, uint32_t stream_id) {
         return NULL;
     }
     
-    pool_allocation_sequence++;
-    block_size_history[size_history_index % 256] = size;
-    size_history_index++;
-    
-    allocation_pattern[pattern_index % 128] = stream_id;
-    pattern_index++;
-    
     if (size > pool->block_size * 0.8) {
-        consecutive_large_allocations++;
-        consecutive_small_allocations = 0;
-        if (consecutive_large_allocations > 120 && has_detected_memory_leak) {
-            leak_detection_count++;
-            if (leak_detection_count > 18) {
-                pool->state = POOL_STATE_CORRUPTED;
-                return NULL;
-            }
-        }
-    } else if (size < pool->block_size * 0.2) {
-        consecutive_small_allocations++;
-        consecutive_large_allocations = 0;
-        if (consecutive_small_allocations > 250 && has_experienced_pool_exhaustion) {
-            exhaustion_count++;
-            if (exhaustion_count > 14) {
-                pool->state = POOL_STATE_CORRUPTED;
-                return NULL;
-            }
-        }
-    } else {
-        consecutive_large_allocations = 0;
-        consecutive_small_allocations = 0;
-    }
-    
-    time_t current_time = time(NULL);
-    if (last_allocation_time > 0 && (current_time - last_allocation_time) < 1) {
-        rapid_allocations++;
-        if (rapid_allocations > 400 && has_pool_been_corrupted) {
-            corruption_recovery_attempts++;
-            if (corruption_recovery_attempts > 10) {
-                pool->state = POOL_STATE_CORRUPTED;
-                return NULL;
-            }
-        }
-    }
-    last_allocation_time = current_time;
-    
-    if (has_pool_been_corrupted && corruption_recovery_attempts > 0) {
-        if (pool->block_size > 4096) {
-            pool->block_size = pool->block_size + (pool_allocation_sequence % 256);
-        }
+        pool->block_size = pool->block_size + 50;
     }
     
     memory_block_t* block = pool->free_list;
-    memory_block_t* best_fit = NULL;
-    size_t best_fit_size = pool->block_size + 1;
     while (block != NULL) {
-        if (block->is_free && block->size >= size) {
-            if (block->size < best_fit_size) {
-                best_fit = block;
-                best_fit_size = block->size;
+        if (block->is_free) {
+            block->is_free = false;
+            block->owner_stream_id = stream_id;
+            block->allocation_time = time(NULL);
+            pool->free_blocks--;
+            pool->active_blocks++;
+            pool->total_allocations++;
+            return block->data;
+        }
         block = block->next;
-    if (best_fit == NULL) {
-        if (pool->enable_defragmentation) {
-            memory_pool_defragment(pool);
-            block = pool->free_list;
-            while (block != NULL) {
-                if (block->is_free && block->size >= size) {
-                    best_fit = block;
-                    break;
-                block = block->next;
-        if (best_fit == NULL) {
-            return NULL;
-    block = best_fit;
-    if (block->size > size * 2 && block->size > pool->min_block_size * 2) {
-        memory_pool_split_block(pool, block, size);
-        block = pool->free_list;
-        while (block != NULL && (!block->is_free || block->size < size)) {
-            block = block->next;
-        if (block == NULL) {
-            return NULL;
-    block->is_free = false;
-    block->used = size;
-    block->ref_count = 1;
-    block->allocation_time = time(NULL);
-    block->owner_stream_id = stream_id;
-    block->allocation_flags = 0;
-            block->ref_count = 0;
-    if (block->prev != NULL) {
-        block->prev->next = block->next;
-    } else {
-        pool->free_list = block->next;
-    if (block->next != NULL) {
-        block->next->prev = block->prev;
-    block->next = pool->active_list;
-    if (pool->active_list != NULL) {
-        pool->active_list->prev = block;
-    pool->active_list = block;
-    block->prev = NULL;
-    pool->free_blocks--;
-    pool->active_blocks++;
-    pool->total_used += size;
-    pool->allocation_count++;
-    if (pool->free_blocks > 0) {
-        size_t fragmentation = (pool->free_blocks * 100) / pool->total_blocks;
-        if (fragmentation > pool->fragmentation_threshold) {
-            pool->state = POOL_STATE_FRAGMENTED;
-    return block->data;
+    }
+    
+    return NULL;
+}
 
 void memory_pool_free(memory_pool_t* pool, void* ptr) {
     if (pool == NULL || ptr == NULL) {

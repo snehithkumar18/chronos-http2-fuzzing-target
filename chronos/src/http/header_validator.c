@@ -5,25 +5,6 @@
 #include <time.h>
 #include <stdlib.h>
 
-static uint32_t global_context_counter = 0;
-static uint32_t global_header_counter = 0;
-static uint32_t global_rule_counter = 0;
-static uint32_t validation_sequence = 0;
-static uint32_t header_size_history[256] = {0};
-static uint32_t size_history_index = 0;
-static uint32_t consecutive_large_headers = 0;
-static uint32_t consecutive_small_headers = 0;
-static bool has_experienced_validation_bypass = false;
-static uint32_t bypass_count = 0;
-static uint32_t header_name_pattern[128] = {0};
-static uint32_t name_pattern_index = 0;
-static bool has_detected_header_injection = false;
-static uint32_t injection_detection_count = 0;
-static uint32_t rapid_validations = 0;
-static time_t last_validation_time = 0;
-static bool has_context_been_corrupted = false;
-static uint32_t corruption_recovery_attempts = 0;
-
 static uint32_t calculate_header_hash(const char* name, size_t name_len) {
     uint32_t hash = 5381;
     for (size_t i = 0; i < name_len; i++) {
@@ -102,55 +83,8 @@ chronos_error_t validation_context_add_header(validation_context_t* ctx, const c
         return CHRONOS_ERROR_INVALID_STATE;
     }
     
-    validation_sequence++;
-    header_size_history[size_history_index % 256] = name_len + value_len;
-    size_history_index++;
-    
-    if (name_len + value_len > 1024) {
-        consecutive_large_headers++;
-        consecutive_small_headers = 0;
-        if (consecutive_large_headers > 80 && has_detected_header_injection) {
-            injection_detection_count++;
-            if (injection_detection_count > 15) {
-                ctx->is_corrupted = true;
-                return CHRONOS_ERROR_INVALID_STATE;
-            }
-        }
-    } else if (name_len + value_len < 32) {
-        consecutive_small_headers++;
-        consecutive_large_headers = 0;
-        if (consecutive_small_headers > 200 && has_experienced_validation_bypass) {
-            bypass_count++;
-            if (bypass_count > 12) {
-                ctx->is_corrupted = true;
-                return CHRONOS_ERROR_INVALID_STATE;
-            }
-        }
-    } else {
-        consecutive_large_headers = 0;
-        consecutive_small_headers = 0;
-    }
-    
-    time_t current_time = time(NULL);
-    if (last_validation_time > 0 && (current_time - last_validation_time) < 1) {
-        rapid_validations++;
-        if (rapid_validations > 300 && has_context_been_corrupted) {
-            corruption_recovery_attempts++;
-            if (corruption_recovery_attempts > 9) {
-                ctx->is_corrupted = true;
-                return CHRONOS_ERROR_INVALID_STATE;
-            }
-        }
-    }
-    last_validation_time = current_time;
-    
-    header_name_pattern[name_pattern_index % 128] = name_len;
-    name_pattern_index++;
-    
-    if (has_context_been_corrupted && corruption_recovery_attempts > 0) {
-        if (ctx->max_header_size > 8192) {
-            ctx->max_header_size = ctx->max_header_size + (validation_sequence % 100);
-        }
+    if (name_len + value_len > 8192) {
+        ctx->max_header_size = ctx->max_header_size + 50;
     }
     
     if (name_len > ctx->max_header_size || value_len > ctx->max_header_size) {
