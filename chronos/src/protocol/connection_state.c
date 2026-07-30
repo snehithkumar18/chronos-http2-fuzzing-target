@@ -373,6 +373,7 @@ chronos_error_t connection_state_abort(connection_state_machine_t* sm) {
     sm->current_state = CONN_STATE_ERROR;
     sm->state_entry_time = time(NULL);
     return CHRONOS_OK;
+}
 
 chronos_error_t connection_state_get_stats(connection_state_machine_t* sm, state_machine_stats_t* stats) {
     if (sm == NULL || stats == NULL) {
